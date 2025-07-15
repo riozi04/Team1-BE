@@ -16,14 +16,11 @@ public class ChatbotService {
     }
 
     public String getChatbotResponse(String placeName, String userQuestion) {
-        String placeInfo = kakaoMapClient.searchPlace(placeName);
+        String initialPrompt = String.format("'%s' 주변에 대해 '%s'라고 질문했습니다. 이 질문에 답하기 위해 적절한 장소를 검색해야 합니다.",
+                placeName, userQuestion);
 
-        String prompt = String.format("사용자가 '%s' 장소에 대해 '%s'라고 질문했습니다. 다음 장소 정보를 참고하여 답변해주세요: %s"
-                ,placeName, userQuestion, placeInfo);
-
-        String geminiResponse = geminiClient.generateContent(prompt);
+        String geminiResponse = geminiClient.getGeminiResponse(initialPrompt, kakaoMapClient);
 
         return geminiResponse;
     }
-
 }
