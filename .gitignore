@@ -20,6 +20,7 @@ bin/
 ### IntelliJ IDEA ###
 application.properties
 .idea
+.ideaS
 *.iws
 *.iml
 *.ipr
@@ -27,6 +28,9 @@ out/
 !**/src/main/**/out/
 !**/src/test/**/out/
 
+###Secret Config Files###
+application.properties
+.env
 ### NetBeans ###
 /nbproject/private/
 /nbbuild/
