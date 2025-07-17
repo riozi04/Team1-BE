@@ -18,6 +18,7 @@ import org.springframework.beans.factory.annotation.Value;
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -39,7 +40,8 @@ public class GeminiClient {
 
     private VertexAI vertexAI;
     private GenerativeModel model;
-    private final ObjectMapper objectMapper;
+
+    private final List<Content> history = new ArrayList<>();
 
     public GeminiClient(
             ObjectMapper objectMapper,
@@ -47,7 +49,6 @@ public class GeminiClient {
             @Value("${gemini.model-name}") String geminiModelName,
             @Value("${GOOGLE_CLOUD_PROJECT_ID}") String projectId
     ) {
-        this.objectMapper = objectMapper;
         this.geminiApiKey = geminiApiKey;
         this.geminiModelName = geminiModelName;
         this.projectId = projectId;
@@ -82,10 +83,38 @@ public class GeminiClient {
         }
     }
 
-    public String getGeminiResponse(String userPrompt, KakaoMapClient kakaoMapClient) {
+    public String getGeminiResponse(String placeName, String userQuestion, KakaoMapClient kakaoMapClient) {
         try {
-            GenerateContentResponse response = model.generateContent(userPrompt);
+            String promptContext;
+            if (history.isEmpty()) {
+                promptContext = String.format("지금부터 '%s' 주변 장소에 대해 이야기할 것입니다. 다음 질문에 답해주세요: '%s'\n\n", placeName, userQuestion);
+            } else {
+               promptContext = String.format("사용자의 질문은 '%s'입니다. 이 질문에 답하기 위해, 필요하다면 '%s' 주변에서 새로운 장소를 검색하거나 이전에 언급된 장소와 다른 장소를 찾아주세요.\n\n", userQuestion, placeName);
+            }
+
+            String fullUserPrompt = promptContext +
+                    "장소 검색 결과가 있다면, 다음 양식에 맞춰 장소를 추천해주세요:" +
+                    "\n\n[번호]. [장소 이름] ([장소 카테고리])" +
+                    "\n[장소 주소]" +
+                    "\n[장소 전화번호]" +
+                    "\n[장소에 대한 모델의 간략한 설명 (특징, 분위기, 추천 대상 등)]" +
+                    "\n\n각 추천 장소는 서로 다른 줄로 구분해주세요." +
+                    "\n만약 검색 결과가 없다면, '죄송합니다. 요청하신 조건에 맞는 장소를 찾을 수 없습니다. 다른 검색 조건을 알려주시겠어요?'와 같이 응답해주세요.";
+
+
+            history.add(Content.newBuilder()
+                    .setRole("user")
+                    .addParts(Part.newBuilder().setText(fullUserPrompt).build())
+                    .build());
+
+            GenerateContentResponse response = model.generateContent(history);
             Content modelContent = response.getCandidates(0).getContent();
+
+            if (modelContent.getPartsCount() > 0 && modelContent.getParts(0).hasFunctionCall()) {
+                history.add(modelContent);
+            } else {
+                history.add(modelContent);
+            }
 
             if (modelContent.getPartsCount() > 0 && modelContent.getParts(0).hasFunctionCall()) {
                 String functionName = modelContent.getParts(0).getFunctionCall().getName();
@@ -125,29 +154,35 @@ public class GeminiClient {
                     }
                     Struct toolOutputStruct = responseStructBuilder.build();
 
-                    GenerateContentResponse finalResponse = model.generateContent(Arrays.asList(
-                            Content.newBuilder()
-                                    .setRole("user")
-                                    .addParts(Part.newBuilder().setText(userPrompt).build())
-                                    .build(),
-                            modelContent,
-                            Content.newBuilder()
-                                    .addParts(Part.newBuilder()
-                                            .setFunctionResponse(
-                                                    FunctionResponse.newBuilder()
-                                                            .setName(functionName)
-                                                            .setResponse(toolOutputStruct)
-                                                            .build())
-                                            .build())
-                                    .build()
-                    ));
-                    return ResponseHandler.getText(finalResponse);
+                    Content functionResponseContent = Content.newBuilder()
+                            .addParts(Part.newBuilder()
+                                    .setFunctionResponse(
+                                            FunctionResponse.newBuilder()
+                                                    .setName(functionName)
+                                                    .setResponse(toolOutputStruct)
+                                                    .build())
+                                    .build())
+                            .build();
+                    history.add(functionResponseContent);
+
+                    GenerateContentResponse finalResponse = model.generateContent(history);
+                    String finalAnswer = ResponseHandler.getText(finalResponse);
+                    history.add(Content.newBuilder()
+                            .setRole("model")
+                            .addParts(Part.newBuilder().setText(finalAnswer).build())
+                            .build());
+                    return finalAnswer;
 
                 } else {
                     return "Gemini가 알 수 없는 함수를 호출하려 했습니다: " + functionName;
                 }
             } else {
-                return ResponseHandler.getText(response);
+                String answer = ResponseHandler.getText(response);
+                history.add(Content.newBuilder()
+                        .setRole("model")
+                        .addParts(Part.newBuilder().setText(answer).build())
+                        .build());
+                return answer;
             }
         } catch (IOException e) {
             e.printStackTrace();
